@@ -201,7 +201,7 @@ data_preprocess <- function(filename, threshold = 2.5){
   name$Resp2 <- scale(removeOuts(name$Resp2, threshold))
   name$HR1 <- scale(removeOuts(name$HR1, threshold))
   name$HR2 <- scale(removeOuts(name$HR2, threshold))
-  name <- name %>%  group(n = 100, method = 'greedy') %>% #Downsampling with 100 
+  name <- name %>%  group(n = 1000, method = 'greedy') %>% #Downsampling with 1000
   dplyr::summarise(
     time = mean(time,na.rm=T),
     HR1 = mean(HR1,na.rm=T),
@@ -223,59 +223,105 @@ data_preprocess <- function(filename, threshold = 2.5){
 files <- list.files("data(3)/data/", pattern="*.csv", full.names = TRUE)
 
 # Run the function on the whole dataset using map_df
-#phys_data <- map_df(files, data_preprocess)
-
+phys_data <- map_df(files, data_preprocess)
 
 #Instead loading saved back-up csv-file
-phys_data <- read.csv("back-up.csv")
+phys_data <- read.csv("no_bad_data.csv")
 
 summary(phys_data)
 # Now we need to make sure all the data are meaningful or something has to be removed
 # E.g. "Study1_G1_T1_Synchronous" has one bad respiration signal. We could replace it with NAs
 
-summary(phys_data$HR1) #We find 139 NA's in the data
-which(is.na(phys_data$Resp1)==TRUE) #We find out that the NA's are from rows 52447-52585
+#### NEXT BIT IS CAPTURED WHEN LOADING THE BACK-UP FILE ###
+#summary(phys_data$Resp1) #We find 14 NA's in the data
+#which(is.na(phys_data$Resp1)==TRUE) #We find out that the NA's are from rows 5260 - 5273
 
-NAs <- phys_data[52447:52585,] #Making data set with the data we exclude 
-phys_data <- phys_data[c(1:52446,52586:178289),] #Removing the 139 rows from the data set
+#NAs <- phys_data[5260:5273,] #Making data set with the data we exclude 
+#phys_data <- phys_data[c(1:5259,5274:17895),] #Removing the 139 rows from the data set
 
 
 #Converting ms to s
-phys_data$time[phys_data$Study=="Study3"] <- (phys_data$time[phys_data$Study=="Study3"])/1000 
-phys_data$time[phys_data$Study=="Study4"] <- (phys_data$time[phys_data$Study=="Study4"])/1000
+#phys_data$time[phys_data$Study=="Study3"] <- (phys_data$time[phys_data$Study=="Study3"])/1000 
+#phys_data$time[phys_data$Study=="Study4"] <- (phys_data$time[phys_data$Study=="Study4"])/1000
 
 #Converting minutes to s
-phys_data$time[phys_data$Study=="Study1"] <- (phys_data$time[phys_data$Study=="Study1"])*60
-phys_data$time[phys_data$Study=="Study2"] <- (phys_data$time[phys_data$Study=="Study2"])*60
+#phys_data$time[phys_data$Study=="Study1"] <- (phys_data$time[phys_data$Study=="Study1"])*60
+#phys_data$time[phys_data$Study=="Study2"] <- (phys_data$time[phys_data$Study=="Study2"])*60
+
+write.csv(phys_data, "phys_data_1000.csv")
 
 plot(phys_data$time)
 
-phys_data %>% 
-
-
 #Discovering bad data 
 
-phys_data1 <- phys_data
-
-remnasd <- function(vector){
-  sd <- sd(vector)
-  vector[sd==0] <- NA
+#Function for finding bad data
+rolling_in_the_deep <- function(data, variable, window_l, steps){
+  li <- data.frame() #Empty dataframe 
+  dat <- data #The data you put in in the function 
+  l <- as.list(dat[,colnames(dat) == variable]) #vectorlist --> choose the one where column name is the variable name --> a column in the dataframe just put into the function 
+  for (i in seq(1, nrow(dat), steps)){ #Making a sequence that is as long as the number of rows in the dataframe and that jumps the number of steps ahead specified in the function, e.g. 1 through all rows jumping 3 steps at a time --> 1, NA, NA, 4, etc. 
+  log <- sd(l[[1]][(i):(i+(window_l-1))]) == 0 #Go into the list --> take the element (i) we are at and between that plus the window length minus 1 --> where the standard deviation between those two numbers is 0, they go into log as True or False --> meaning that log is a list of Trues and Falses 
+  li[i,1] <- log #Saving the log list into the dataframe as a column
+  li[i,2:(2+(window_l-1))] <- c((i):(i+(window_l-1))) #Saving the rows that went into the specific window accordingly 
 }
-phys_data1$HR1 <- remnasd(phys_data1$HR1)
-summary(phys_data1$HR1)
-evobiR::SlidingWindow(remnasd, phys_data1$HR1, 10,3)
+  li <- li[is.na(li[,1])==F,] #In the beginning of the sequence, there will be some NA's due to the loop jumping
+  li <- li[li[,1]==T,] #Only keep the columns where the first column is True so the dataframe only contains the columns where the sd of a window was 0
+  return(li)
+}
+
+#Finding the bad data 
+HR2_artefact <- rolling_in_the_deep(phys_data, "HR2", 2, 1)
+HR1_artefact <- rolling_in_the_deep(phys_data, "HR1", 2, 1)
+Resp2_artefact <- rolling_in_the_deep(phys_data, "Resp2", 2, 1)
+Resp1_artefact <- rolling_in_the_deep(phys_data, "Resp1", 2, 1)
+
+
+#Removing the bad data by making vector with the columns that have the bad data 
+HR1_artefact_unique <- unique(c(HR1_artefact$V2,HR1_artefact$V3))
+HR2_artefact_unique <- unique(c(HR2_artefact$V2,HR2_artefact$V3))
+Resp1_artefact_unique <- unique(c(Resp1_artefact$V2,Resp1_artefact$V3))
+Resp2_artefact_unique <- unique(c(Resp2_artefact$V2,Resp2_artefact$V3))
+
+phys_data[HR1_artefact_unique,3] <- NA #Removing bad rows in HR1
+phys_data[HR2_artefact_unique,4] <- NA #Removing bad rows in HR2
+phys_data[Resp1_artefact_unique,5] <- NA #Removing bad rows in Resp1
+phys_data[Resp2_artefact_unique,6] <- NA #Removing bad rows in Resp2
+
+summary(phys_data)
 
 # plots plots plots
 ggplot(data = phys_data)+
   geom_line(aes(x = time, y =Resp1, color = "Participant1"))+
   geom_line(aes(x = time, y =Resp2, color = "Participant2"))+
-  ggtitle("test")+
+  ggtitle("Respiration")+
   facet_wrap(~GroupID)
 
-# Remove bad data
+#Plotting heart rate data by study
+subset(phys_data,Study == "Study1") %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=HR2, color = "Participant 2"))+geom_line(aes(y=HR1, color = "Participant 1"))+facet_wrap(~Group) + theme(legend.position = "none")
+
+subset(phys_data,Study == "Study2") %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=HR2, color = "Participant 2"))+geom_line(aes(y=HR1, color = "Participant 1"))+facet_wrap(~Group) + theme(legend.position = "none")
+
+subset(phys_data,Study == "Study3") %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=HR2, color = "Participant 2"))+geom_line(aes(y=HR1, color = "Participant 1"))+facet_wrap(~Group) + theme(legend.position = "none")
+
+subset(phys_data,Study == "Study4") %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=HR2, color = "Participant 2"))+geom_line(aes(y=HR1, color = "Participant 1"))+facet_wrap(~Group) + theme(legend.position = "none")
+
+#Plotting respiration data by study
+subset(phys_data,Study == "Study1") %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=Resp1, color = "Participant1"))+geom_line(aes(y=Resp2, color = "Participant2"))+facet_wrap(~Group)
+#There seems to be an outlier still in the respiration signal in study 1 
+
+subset(phys_data,Study == "Study2") %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=Resp1, color = "Participant1"))+geom_line(aes(y=Resp2, color = "Participant2"))+facet_wrap(~Group)
+
+subset(phys_data,Study == "Study3") %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=Resp1, color = "Participant1"))+geom_line(aes(y=Resp2, color = "Participant2"))+facet_wrap(~Group)
+
+subset(phys_data,Study == "Study4") %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=Resp1, color = "Participant1"))+geom_line(aes(y=Resp2, color = "Participant2"))+facet_wrap(~Group)
+
+#Plotting all data
+phys_data %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=Resp1, color = "Participant1"))+geom_line(aes(y=Resp2, color = "Participant2"))+facet_wrap(~GroupID)
+
+phys_data %>% group_by(GroupID) %>% ggplot(aes(x=time))+geom_line(aes(y=HR1, color = "Participant1"))+geom_line(aes(y=HR2, color = "Participant2"))+facet_wrap(~GroupID)
 
 # Save the data
-#write.csv(phys_data, "back-up.csv") #Writing back-up csv 
+#write.csv(phys_data, "no_bad_data.csv") 
 ```
 
 ## Now we need to run some analysis
@@ -313,6 +359,9 @@ Bonus question: what if we include an additional layer? Is my heart rate just ad
 
 # Model change as a function of own and other previous state 
 
+###Notes###
+#y~ b1(HR1)+b2(HR2) --> this is the equation from the paper written in more R-like form 
+#Negative stability = stable, positive stability = unstable (because - * - = positive and - * + = -, so a positive signal will get further away from the baseline) --> removing the minus in the equation (it used to be y~ b1(-HR1)- b2(HR2) but remember then that when we interpret the beta, we have to change the direction of it so that posititve becomes negative and vice versa)
 
 # Bonus points: Add to the previous model also change in the other to see whether my adaptation is influenced by the other's adaptation.
 
